@@ -1,0 +1,188 @@
+import { useState, type FormEvent } from "react";
+import { AlertCircle, ArrowRight, Check, Clock3, MapPin, ShieldCheck, Sparkles } from "lucide-react";
+import { trpc } from "@/lib/trpc";
+
+type BookingForm = {
+  place: string;
+  doctor: Doctor;
+  date: string;
+  time: string;
+  address: string;
+  patientName: string;
+  phone: string;
+  reason: Treatment | "";
+};
+const doctors = ["Dra. Claudia", "Dr. Hugo"] as const;
+const treatments = ["Revisión", "Limpieza", "Empaste", "Blanqueamiento", "Prótesis", "Arreglo", "Implante", "Urgencia"] as const;
+type Doctor = (typeof doctors)[number];
+type Treatment = (typeof treatments)[number];
+
+const timeSlots = Array.from({ length: 20 }, (_, index) => {
+  const minutes = 8 * 60 + index * 30;
+  return `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
+});
+
+function localToday() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+}
+
+function readableDate(value: string) {
+  if (!value) return "";
+  return new Date(`${value}T12:00:00`).toLocaleDateString("es-ES", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
+}
+
+export default function Home() {
+  const [form, setForm] = useState<BookingForm>({
+    place: "Clínica Dental",
+    doctor: doctors[0],
+    date: "",
+    time: "",
+    address: "Calle Portería del Carmen 4",
+    patientName: "",
+    phone: "",
+    reason: "",
+  });
+  const [confirmation, setConfirmation] = useState<BookingForm | null>(null);
+
+  const availability = trpc.appointments.availability.useQuery(
+    { place: form.place.trim(), doctor: form.doctor, date: form.date },
+    {
+      enabled: Boolean(form.place.trim().length >= 2 && form.date),
+      refetchOnWindowFocus: true,
+      staleTime: 0,
+    },
+  );
+  const createAppointment = trpc.appointments.create.useMutation();
+  const busyTimes = availability.data?.busyTimes ?? [];
+
+  function update<K extends keyof BookingForm>(field: K, value: BookingForm[K]) {
+    createAppointment.reset();
+    setConfirmation(null);
+    setForm(current => ({ ...current, [field]: value, ...(field === "date" || field === "doctor" || field === "place" ? { time: "" } : {}) }));
+  }
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setConfirmation(null);
+    try {
+      if (!form.reason) return;
+      await createAppointment.mutateAsync({ ...form, place: form.place.trim(), reason: form.reason as Treatment });
+      setConfirmation({ ...form, place: form.place.trim() });
+      await availability.refetch();
+    } catch {
+      await availability.refetch();
+    }
+  }
+
+  const slotTaken = Boolean(form.time && busyTimes.includes(form.time));
+  const createError = createAppointment.error?.message;
+
+  return (
+    <main className="booking-page">
+      <header className="topbar">
+        <a className="brand" href="/" aria-label="Clínica Dental, inicio">
+          <span className="brand-mark"><Sparkles size={21} strokeWidth={1.8} /></span>
+          <span>Clínica Dental<span className="brand-dot">.</span></span>
+        </a>
+        <div className="home-topbar-actions"><div className="topbar-note"><span className="live-dot" /> Agenda presencial</div><a className="admin-entry" href="/admin"><ShieldCheck size={14} /> Administración</a></div>
+      </header>
+
+      <section className="intro" aria-labelledby="page-title">
+        <div className="intro-copy">
+          <div className="eyebrow"><Sparkles size={14} /> CUIDAMOS DE TU SONRISA</div>
+          <h1 id="page-title">Tu próxima visita,<br /><em>sin complicaciones.</em></h1>
+          <p>Reserva tu cita presencial en unos pocos pasos. Elige el horario que mejor te venga y nos pondremos en contacto contigo.</p>
+          <div className="trust-row"><span><ShieldCheck size={16} /> Reserva segura</span><span><Clock3 size={16} /> Horarios en bloques de 30 min</span></div>
+        </div>
+        <aside className="visit-card" aria-label="Información de la visita">
+          <div className="visit-card-icon"><MapPin size={19} /></div>
+          <div className="visit-card-label">ATENCIÓN PRESENCIAL</div>
+          <h2>Una cita a tu medida</h2>
+          <p>Indica la sede y su dirección. Verás los espacios ocupados antes de confirmar.</p>
+          <div className="visit-card-rule" />
+          <div className="visit-card-foot"><span className="mini-calendar">30</span><span>Consulta disponibilidad al instante</span></div>
+        </aside>
+      </section>
+
+      <section className="form-shell" aria-labelledby="form-heading">
+        <div className="form-heading">
+          <div><span className="step-label">RESERVA · 01</span><h2 id="form-heading">Cuéntanos qué necesitas</h2><p>Completa tus datos y selecciona un horario libre.</p></div>
+          <div className="required-note"><span>*</span> Campos obligatorios</div>
+        </div>
+
+        <form onSubmit={submit}>
+          <div className="section-label"><span className="section-number">1</span><span>DETALLES DE LA CITA</span></div>
+          <div className="field-grid">
+            <label className="field">
+              <span>Clínica o sede <b>*</b></span>
+              <input required maxLength={120} value={form.place} onChange={event => update("place", event.target.value)} placeholder="Ej. Clínica Dental Centro" autoComplete="organization" />
+            </label>
+            <label className="field">
+              <span>Dirección de la clínica <b>*</b></span>
+              <input required minLength={5} maxLength={240} value={form.address} onChange={event => update("address", event.target.value)} autoComplete="street-address" />
+            </label>
+            <label className="field">
+              <span>Doctor/a <b>*</b></span>
+              <select required value={form.doctor} onChange={event => update("doctor", event.target.value as Doctor)}>{doctors.map(doctor => <option key={doctor}>{doctor}</option>)}</select>
+            </label>
+            <label className="field">
+              <span>Fecha <b>*</b></span>
+              <input required type="date" min={localToday()} value={form.date} onChange={event => update("date", event.target.value)} />
+            </label>
+            <div className="field time-field">
+              <span id="time-label">Hora <b>*</b></span>
+              {!form.date ? <div className="slot-prompt">Selecciona primero una fecha.</div> : availability.isFetching ? <div className="slot-prompt"><span className="loading-dot" /> Comprobando disponibilidad…</div> : (
+                <div className="time-slots" role="group" aria-labelledby="time-label">
+                  {timeSlots.map(time => {
+                    const occupied = busyTimes.includes(time);
+                    const selected = form.time === time;
+                    return <button key={time} type="button" className={`time-slot${selected ? " selected" : ""}${occupied ? " occupied" : ""}`} disabled={occupied} aria-pressed={selected} aria-label={`${time}${occupied ? ", ocupado" : ""}`} onClick={() => update("time", time)}>{time}{occupied && <span className="occupied-label">Ocupada</span>}</button>;
+                  })}
+                </div>
+              )}
+              {form.date && !availability.isFetching && !availability.isError && <small className="field-hint">Cada cita reserva un bloque de 30 minutos.</small>}
+            </div>
+          </div>
+
+          {availability.isError && form.date && <div className="notice error" role="alert"><AlertCircle size={18} /><span>No se pudo consultar la agenda. Comprueba tu conexión e inténtalo de nuevo.</span><button type="button" className="text-action" onClick={() => availability.refetch()}>Reintentar</button></div>}
+          {slotTaken && <div className="notice error" role="alert"><AlertCircle size={18} /><span>Ese horario está ocupado. Elige otro día u hora.</span></div>}
+
+          <div className="section-label patient-section"><span className="section-number">2</span><span>TUS DATOS</span></div>
+          <div className="field-grid patient-grid">
+            <label className="field">
+              <span>Nombre completo del paciente <b>*</b></span>
+              <input required minLength={2} maxLength={120} value={form.patientName} onChange={event => update("patientName", event.target.value)} placeholder="Nombre y apellidos" autoComplete="name" />
+            </label>
+            <label className="field">
+              <span>Teléfono de contacto <b>*</b></span>
+              <input required type="tel" minLength={7} maxLength={30} pattern="[+0-9 () .-]{7,30}" value={form.phone} onChange={event => update("phone", event.target.value)} placeholder="Ej. +34 600 123 456" autoComplete="tel" />
+            </label>
+            <label className="field full-width">
+              <span>Tratamiento o necesidad <b>*</b></span>
+              <select required value={form.reason} onChange={event => update("reason", event.target.value as Treatment | "")}><option value="">Elige un tratamiento</option>{treatments.map(treatment => <option key={treatment}>{treatment}</option>)}</select>
+              <small className="field-hint">Selecciona el motivo más próximo a tu visita.</small>
+            </label>
+          </div>
+
+          {createError && <div className="notice error" role="alert"><AlertCircle size={18} /><span>{createError}</span></div>}
+          {confirmation && <div className="confirmation" role="status" aria-live="polite"><div className="confirmation-check"><Check size={20} /></div><div><strong>¡Tu solicitud de cita está confirmada!</strong><p>{readableDate(confirmation.date)} a las {confirmation.time} · {confirmation.doctor} · {confirmation.reason}</p><small>{confirmation.place}, {confirmation.address}. Hemos registrado el teléfono {confirmation.phone}.</small></div></div>}
+
+          <div className="submit-row">
+            <p><ShieldCheck size={16} /> Tus datos se usan únicamente para gestionar esta cita.</p>
+            <button className="submit-button" type="submit" disabled={!form.time || slotTaken || availability.isFetching || createAppointment.isPending || availability.isError}>
+              {createAppointment.isPending ? "Reservando…" : "Confirmar cita"}{!createAppointment.isPending && <ArrowRight size={17} />}
+            </button>
+          </div>
+        </form>
+      </section>
+
+      <footer className="footer"><span>CLÍNICA DENTAL <i>·</i> AGENDA DE CITAS</span><span>Una atención cercana empieza aquí.</span></footer>
+    </main>
+  );
+}
